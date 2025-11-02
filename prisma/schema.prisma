@@ -1,0 +1,78 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  username  String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  bets      Bet[]
+}
+
+model Game {
+  id         String    @id @default(cuid())
+  externalId String?   @unique
+  sport      String    @default("basketball_ncaab")
+  gameTime   DateTime
+  awayTeam   String
+  homeTeam   String
+  awayScore  Int?
+  homeScore  Int?
+  isCompleted Boolean  @default(false)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  odds       Odds[]
+  bets       Bet[]
+  
+  @@index([sport])
+}
+
+model Odds {
+  id          String   @id @default(cuid())
+  gameId      String
+  game        Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  bookmaker   String   @default("draftkings")
+  awayML      Int?
+  homeML      Int?
+  awaySpread  Float?
+  homeSpread  Float?
+  spreadOdds  Int?
+  totalLine   Float?
+  overOdds    Int?
+  underOdds   Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([gameId])
+}
+
+model Bet {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gameId    String
+  game      Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  betType   String   // ML, SPREAD, TOTAL_OVER, TOTAL_UNDER
+  team      String?  // which team (for ML and SPREAD)
+  line      Float?   // spread or total line
+  odds      Int      // American odds
+  stake     Float    // amount wagered
+  result    String   @default("PENDING") // PENDING, WON, LOST, PUSH
+  profit    Float?   // profit/loss amount
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([gameId])
+}
+

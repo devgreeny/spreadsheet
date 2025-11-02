@@ -1,0 +1,171 @@
+{% extends "layout.html" %}
+
+{% block title %}Dashboard - The Spreadsheet{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>Dashboard</h1>
+
+    <!-- Statistics Cards -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-label">Total Bets</div>
+            <div class="stat-value">{{ stats.totalBets }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Win Rate</div>
+            <div class="stat-value">{{ "%.1f"|format(stats.winRate) }}%</div>
+            <div class="stat-detail">{{ stats.wonBets }}W - {{ stats.lostBets }}L</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Total Profit</div>
+            <div class="stat-value {% if stats.totalProfit >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                {{ "%+.2f"|format(stats.totalProfit) }} units
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">ROI</div>
+            <div class="stat-value {% if stats.roi >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                {{ "%.1f"|format(stats.roi) }}%
+            </div>
+        </div>
+    </div>
+
+    <!-- Analytics -->
+    {% if analytics.betTypeStats %}
+    <div class="card" style="margin-top: 30px;">
+        <h2>Performance by Bet Type</h2>
+        <div class="table-responsive">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Bet Type</th>
+                        <th>Bets</th>
+                        <th>Win Rate</th>
+                        <th>Profit</th>
+                        <th>ROI</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for stat in analytics.betTypeStats %}
+                    <tr>
+                        <td><strong>{{ stat.betType }}</strong></td>
+                        <td>{{ stat.totalBets }} ({{ stat.wonBets }}W - {{ stat.lostBets }}L)</td>
+                        <td>{{ "%.1f"|format(stat.winRate) }}%</td>
+                        <td class="{% if stat.totalProfit >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                            {{ "%+.2f"|format(stat.totalProfit) }} units
+                        </td>
+                        <td class="{% if stat.roi >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                            {{ "%.1f"|format(stat.roi) }}%
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Team Stats -->
+    {% if analytics.teamStats %}
+    <div class="card" style="margin-top: 30px;">
+        <h2>Top Teams by Profit</h2>
+        <div class="table-responsive">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Team</th>
+                        <th>Record</th>
+                        <th>Win Rate</th>
+                        <th>Profit</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for stat in analytics.teamStats %}
+                    <tr>
+                        <td><strong>{{ stat.team }}</strong></td>
+                        <td>{{ stat.wins }}W - {{ stat.losses }}L</td>
+                        <td>{{ "%.1f"|format(stat.winRate) }}%</td>
+                        <td class="{% if stat.profit >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                            {{ "%+.2f"|format(stat.profit) }} units
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Bet History -->
+    <div class="card" style="margin-top: 30px;">
+        <h2>My Bets</h2>
+        {% if bets %}
+        <div class="table-responsive">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Game</th>
+                        <th>Bet</th>
+                        <th>Odds</th>
+                        <th>Units</th>
+                        <th>Status</th>
+                        <th>Profit/Loss</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for bet in bets %}
+                    <tr>
+                        <td>
+                            {{ bet.game.away_team }} @ {{ bet.game.home_team }}
+                            {% if bet.game.is_completed %}
+                                <br><small class="text-muted">{{ bet.game.away_score }} - {{ bet.game.home_score }}</small>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <strong>
+                            {% if bet.bet_type == 'ML' %}
+                                {{ bet.team }} ML
+                            {% elif bet.bet_type == 'SPREAD' %}
+                                {{ bet.team }} {{ bet.line|format_odds }}
+                            {% elif bet.bet_type == 'TOTAL_OVER' %}
+                                Over {{ bet.line }}
+                            {% elif bet.bet_type == 'TOTAL_UNDER' %}
+                                Under {{ bet.line }}
+                            {% endif %}
+                            </strong>
+                        </td>
+                        <td>{{ bet.odds|format_odds }}</td>
+                        <td>{{ "%.2f"|format(bet.stake) }}</td>
+                        <td>
+                            {% if bet.result == 'WON' %}
+                                <span class="badge badge-success">WON</span>
+                            {% elif bet.result == 'LOST' %}
+                                <span class="badge badge-danger">LOST</span>
+                            {% elif bet.result == 'PUSH' %}
+                                <span class="badge badge-secondary">PUSH</span>
+                            {% else %}
+                                <span class="badge badge-warning">PENDING</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if bet.profit is not none %}
+                                <span class="{% if bet.profit >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                                    {{ "%+.2f"|format(bet.profit) }} units
+                                </span>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted">No bets placed yet. Visit the <a href="{{ url_for('index') }}">games page</a> to place your first bet!</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+

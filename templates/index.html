@@ -1,0 +1,276 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="page-header">
+        <h1>🏀 NCAA Basketball Games</h1>
+        <div style="text-align: right; color: #6b7280; font-size: 0.875rem;">
+            <p>Odds updated automatically 4x daily</p>
+            <p>Scores updated every 3 hours</p>
+        </div>
+    </div>
+
+    {% if game_date %}
+    <div style="text-align: center; margin-bottom: 20px;">
+        <div style="display: inline-block; background-color: #eff6ff; border: 1px solid #3b82f6; color: #1e40af; padding: 8px 16px; border-radius: 6px; font-weight: 500;">
+            📅 Showing games for {{ game_date.strftime('%A, %B %d, %Y') }}
+        </div>
+    </div>
+    {% endif %}
+
+    <div id="message-container"></div>
+
+    <div class="grid-layout">
+        <!-- Games Section -->
+        <div class="games-section">
+            {% if games %}
+                {% for game in games %}
+                <div class="game-card">
+                    <div class="game-header">
+                        <div class="game-time">
+                            {{ game.game_time|format_datetime }}
+                        </div>
+                        {% if game.is_completed %}
+                            <span class="badge badge-success">Final</span>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="game-teams">
+                        <div class="team">
+                            <span class="team-name">{{ game.away_team }} <span style="color: #6b7280; font-size: 0.875rem;">(Away)</span></span>
+                            {% if game.away_score is not none %}
+                                <span class="team-score">{{ game.away_score }}</span>
+                            {% endif %}
+                        </div>
+                        <div class="team">
+                            <span class="team-name">{{ game.home_team }} <span style="color: #6b7280; font-size: 0.875rem;">(Home)</span></span>
+                            {% if game.home_score is not none %}
+                                <span class="team-score">{{ game.home_score }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    {% if game.odds %}
+                        {% set odds = game.odds[0] %}
+                        <div class="odds-section">
+                            <!-- Moneyline -->
+                            <div class="odds-group">
+                                <div class="odds-label">Moneyline</div>
+                                <div class="odds-buttons" style="display: flex; flex-direction: column; gap: 0.5rem;">
+                                    {% if odds.away_ml %}
+                                    <button onclick="placeBet('{{ game.id }}', 'ML', '{{ game.away_team }}', null, {{ odds.away_ml }})" 
+                                            class="odds-btn-full" {% if not current_user.is_authenticated or game.is_completed %}disabled{% endif %}>
+                                        <span style="font-weight: 600;">{{ game.away_team }}</span> {{ odds.away_ml|format_odds }}
+                                    </button>
+                                    {% endif %}
+                                    {% if odds.home_ml %}
+                                    <button onclick="placeBet('{{ game.id }}', 'ML', '{{ game.home_team }}', null, {{ odds.home_ml }})" 
+                                            class="odds-btn-full" {% if not current_user.is_authenticated or game.is_completed %}disabled{% endif %}>
+                                        <span style="font-weight: 600;">{{ game.home_team }}</span> {{ odds.home_ml|format_odds }}
+                                    </button>
+                                    {% endif %}
+                                </div>
+                            </div>
+
+                            <!-- Spread -->
+                            {% if odds.away_spread and odds.spread_odds %}
+                            <div class="odds-group">
+                                <div class="odds-label">Spread</div>
+                                <div class="odds-buttons">
+                                    <button onclick="placeBet('{{ game.id }}', 'SPREAD', '{{ game.away_team }}', {{ odds.away_spread }}, {{ odds.spread_odds }})" 
+                                            class="odds-btn" {% if not current_user.is_authenticated or game.is_completed %}disabled{% endif %}>
+                                        {{ game.away_team }} {{ odds.away_spread|format_odds }}
+                                    </button>
+                                    <button onclick="placeBet('{{ game.id }}', 'SPREAD', '{{ game.home_team }}', {{ odds.home_spread }}, {{ odds.spread_odds }})" 
+                                            class="odds-btn" {% if not current_user.is_authenticated or game.is_completed %}disabled{% endif %}>
+                                        {{ game.home_team }} {{ odds.home_spread|format_odds }}
+                                    </button>
+                                </div>
+                            </div>
+                            {% endif %}
+
+                            <!-- Totals -->
+                            {% if odds.total_line and odds.over_odds and odds.under_odds %}
+                            <div class="odds-group">
+                                <div class="odds-label">Total</div>
+                                <div class="odds-buttons">
+                                    <button onclick="placeBet('{{ game.id }}', 'TOTAL_OVER', null, {{ odds.total_line }}, {{ odds.over_odds }})" 
+                                            class="odds-btn" {% if not current_user.is_authenticated or game.is_completed %}disabled{% endif %}>
+                                        O {{ odds.total_line }} ({{ odds.over_odds|format_odds }})
+                                    </button>
+                                    <button onclick="placeBet('{{ game.id }}', 'TOTAL_UNDER', null, {{ odds.total_line }}, {{ odds.under_odds }})" 
+                                            class="odds-btn" {% if not current_user.is_authenticated or game.is_completed %}disabled{% endif %}>
+                                        U {{ odds.total_line }} ({{ odds.under_odds|format_odds }})
+                                    </button>
+                                </div>
+                            </div>
+                            {% endif %}
+                        </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty-state">
+                    <p>No games available. Click "Refresh Odds" to fetch upcoming games.</p>
+                    <p class="text-muted">💡 Make sure your ODDS_API_KEY is set in the .env file</p>
+                </div>
+            {% endif %}
+        </div>
+
+        <!-- Leaderboard Sidebar -->
+        <div class="sidebar">
+            <div class="card">
+                <h2>Leaderboard</h2>
+                {% if leaderboard %}
+                    <div class="leaderboard-list">
+                        {% for entry in leaderboard %}
+                        <div class="leaderboard-item">
+                            <div class="leaderboard-rank">#{{ loop.index }}</div>
+                            <div class="leaderboard-info">
+                                <div class="leaderboard-name">{{ entry.username }}</div>
+                                <div class="leaderboard-record">{{ entry.wonBets }}W - {{ entry.lostBets }}L</div>
+                            </div>
+                            <div class="leaderboard-profit {% if entry.totalProfit >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                                {{ "%+.1f"|format(entry.totalProfit) }}u
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <a href="{{ url_for('leaderboard') }}" class="btn btn-secondary btn-block" style="margin-top: 15px;">View Full Leaderboard</a>
+                {% else %}
+                    <p class="text-muted">No bets placed yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Bet Modal -->
+<div id="betModal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeBetModal()">&times;</span>
+        <h2>Place Bet</h2>
+        <div id="betDetails"></div>
+        <div class="form-group">
+            <label for="stakeInput">Units</label>
+            <input type="number" id="stakeInput" class="form-input" min="0.1" step="0.1" value="1">
+        </div>
+        <div class="form-group">
+            <label for="oddsInput">Odds (optional - adjust if different)</label>
+            <input type="number" id="oddsInput" class="form-input" placeholder="+100">
+        </div>
+        <div id="potentialPayout"></div>
+        <button onclick="confirmBet()" class="btn btn-primary btn-block">Place Bet</button>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentBet = null;
+
+function placeBet(gameId, betType, team, line, odds) {
+    {% if not current_user.is_authenticated %}
+        showMessage('Please login to place bets', 'error');
+        return;
+    {% endif %}
+    
+    currentBet = { gameId, betType, team, line, odds };
+    
+    let betDescription = '';
+    if (betType === 'ML') {
+        betDescription = `${team} Moneyline (${formatOdds(odds)})`;
+    } else if (betType === 'SPREAD') {
+        betDescription = `${team} ${formatOdds(line)} (${formatOdds(odds)})`;
+    } else if (betType === 'TOTAL_OVER') {
+        betDescription = `Over ${line} (${formatOdds(odds)})`;
+    } else if (betType === 'TOTAL_UNDER') {
+        betDescription = `Under ${line} (${formatOdds(odds)})`;
+    }
+    
+    document.getElementById('betDetails').innerHTML = `<p><strong>${betDescription}</strong></p>`;
+    document.getElementById('oddsInput').value = odds;
+    updatePotentialPayout();
+    document.getElementById('betModal').style.display = 'block';
+    document.getElementById('stakeInput').addEventListener('input', updatePotentialPayout);
+    document.getElementById('oddsInput').addEventListener('input', updatePotentialPayout);
+}
+
+function closeBetModal() {
+    document.getElementById('betModal').style.display = 'none';
+    currentBet = null;
+}
+
+function updatePotentialPayout() {
+    const stake = parseFloat(document.getElementById('stakeInput').value) || 0;
+    const oddsInput = document.getElementById('oddsInput').value;
+    const odds = parseInt(oddsInput) || currentBet.odds;
+    let payout = 0;
+    
+    if (odds > 0) {
+        payout = stake * (odds / 100);
+    } else {
+        payout = stake * (100 / Math.abs(odds));
+    }
+    
+    document.getElementById('potentialPayout').innerHTML = 
+        `<p>Potential Profit: <strong>${payout.toFixed(2)} units</strong></p>`;
+}
+
+function confirmBet() {
+    const stake = parseFloat(document.getElementById('stakeInput').value);
+    if (!stake || stake <= 0) {
+        showMessage('Please enter a valid unit amount', 'error');
+        return;
+    }
+    
+    const oddsInput = document.getElementById('oddsInput').value;
+    const odds = parseInt(oddsInput) || currentBet.odds;
+    
+    fetch('/api/place-bet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            gameId: currentBet.gameId,
+            betType: currentBet.betType,
+            team: currentBet.team,
+            line: currentBet.line,
+            odds: odds,
+            stake: stake
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            showMessage('Bet placed successfully!', 'success');
+            closeBetModal();
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showMessage(data.error || 'Failed to place bet', 'error');
+        }
+    })
+    .catch(err => {
+        showMessage('Error: ' + err.message, 'error');
+    });
+}
+
+function formatOdds(odds) {
+    return odds > 0 ? '+' + odds : odds.toString();
+}
+
+function showMessage(message, type) {
+    const container = document.getElementById('message-container');
+    container.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+    setTimeout(() => container.innerHTML = '', 5000);
+}
+
+window.onclick = function(event) {
+    const modal = document.getElementById('betModal');
+    if (event.target === modal) {
+        closeBetModal();
+    }
+}
+</script>
+{% endblock %}
+

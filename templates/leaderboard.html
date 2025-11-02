@@ -1,0 +1,58 @@
+{% extends "layout.html" %}
+
+{% block title %}Leaderboard - The Spreadsheet{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>🏆 Leaderboard</h1>
+
+    {% if leaderboard %}
+    <div class="card">
+        <div class="table-responsive">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Rank</th>
+                        <th>Username</th>
+                        <th>Total Bets</th>
+                        <th>Record</th>
+                        <th>Win Rate</th>
+                        <th>Total Staked</th>
+                        <th>Total Profit</th>
+                        <th>ROI</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entry in leaderboard %}
+                    <tr>
+                        <td>
+                            <strong class="rank-number">#{{ loop.index }}</strong>
+                            {% if loop.index == 1 %}🥇{% endif %}
+                            {% if loop.index == 2 %}🥈{% endif %}
+                            {% if loop.index == 3 %}🥉{% endif %}
+                        </td>
+                        <td><strong>{{ entry.username }}</strong></td>
+                        <td>{{ entry.totalBets }}</td>
+                        <td>{{ entry.wonBets }}W - {{ entry.lostBets }}L</td>
+                        <td>{{ "%.1f"|format(entry.winRate) }}%</td>
+                        <td>{{ "%.2f"|format(entry.totalStaked) }} units</td>
+                        <td class="{% if entry.totalProfit >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                            <strong>{{ "%+.2f"|format(entry.totalProfit) }} units</strong>
+                        </td>
+                        <td class="{% if entry.roi >= 0 %}profit-positive{% else %}profit-negative{% endif %}">
+                            {{ "%.1f"|format(entry.roi) }}%
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <p>No bets placed yet. Be the first to place a bet!</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+

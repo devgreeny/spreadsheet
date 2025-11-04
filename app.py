@@ -184,8 +184,9 @@ def dashboard():
     page = request.args.get('page', 1, type=int)
     per_page = 50
     
-    # Get user's bets with pagination
+    # Get user's bets with pagination and eager load game data
     bets_pagination = Bet.query.filter_by(user_id=current_user.id)\
+        .options(db.joinedload(Bet.game))\
         .order_by(desc(Bet.created_at))\
         .paginate(page=page, per_page=per_page, error_out=False)
     
@@ -224,8 +225,9 @@ def user_profile(username):
     page = request.args.get('page', 1, type=int)
     per_page = 50
     
-    # Get user's bets with pagination
+    # Get user's bets with pagination and eager load game data
     bets_pagination = Bet.query.filter_by(user_id=user.id)\
+        .options(db.joinedload(Bet.game))\
         .order_by(desc(Bet.created_at))\
         .paginate(page=page, per_page=per_page, error_out=False)
     
@@ -400,11 +402,12 @@ def get_todays_or_next_games():
     # Only get games for next 7 days (not ALL upcoming games)
     week_from_now = now_utc + timedelta(days=7)
     
-    # Limit query to recent games only
+    # Limit query to recent games only with eager loading for caching
     upcoming_games = Game.query.filter(
         Game.game_time >= now_utc,
         Game.game_time <= week_from_now
-    ).order_by(Game.game_time).limit(200).all()
+    ).options(db.joinedload(Game.odds))\
+     .order_by(Game.game_time).limit(200).all()
     
     if not upcoming_games:
         print('📅 No upcoming games found in database')

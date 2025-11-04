@@ -1,10 +1,13 @@
 {% extends "layout.html" %}
 
-{% block title %}Dashboard - The Spreadsheet{% endblock %}
+{% block title %}{{ user.username }}'s Profile - The Spreadsheet{% endblock %}
 
 {% block content %}
 <div class="container">
-    <h1>Dashboard</h1>
+    <h1>{{ user.username }}'s Profile</h1>
+    {% if is_own_profile %}
+    <p class="text-muted">This is your profile. <a href="{{ url_for('dashboard') }}">Go to your dashboard</a></p>
+    {% endif %}
 
     <!-- Statistics Cards -->
     <div class="stats-grid">
@@ -99,7 +102,7 @@
 
     <!-- Bet History -->
     <div class="card" style="margin-top: 30px;">
-        <h2>My Bets</h2>
+        <h2>{{ user.username }}'s Bets</h2>
         {% if bets %}
         <div class="table-responsive">
             <table class="table">
@@ -111,7 +114,9 @@
                         <th>Units</th>
                         <th>Status</th>
                         <th>Profit/Loss</th>
+                        {% if is_own_profile %}
                         <th>Actions</th>
+                        {% endif %}
                     </tr>
                 </thead>
                 <tbody>
@@ -158,24 +163,43 @@
                                 -
                             {% endif %}
                         </td>
+                        {% if is_own_profile %}
                         <td>
                             {% if bet.result == 'PENDING' %}
                                 <button class="btn btn-sm btn-primary" onclick="editBet('{{ bet.id }}', {{ bet.odds }}, {{ bet.line or 'null' }}, {{ bet.stake }}, '{{ bet.team or '' }}')">Edit</button>
                             {% endif %}
                             <button class="btn btn-sm btn-danger" onclick="deleteBet('{{ bet.id }}')">Delete</button>
                         </td>
+                        {% endif %}
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
+
+        <!-- Pagination -->
+        {% if pagination.pages > 1 %}
+        <div class="pagination">
+            {% if pagination.has_prev %}
+                <a href="{{ url_for('user_profile', username=user.username, page=pagination.prev_num) }}">&laquo; Previous</a>
+            {% endif %}
+            
+            <span>Page {{ pagination.page }} of {{ pagination.pages }}</span>
+            
+            {% if pagination.has_next %}
+                <a href="{{ url_for('user_profile', username=user.username, page=pagination.next_num) }}">Next &raquo;</a>
+            {% endif %}
+        </div>
+        {% endif %}
+
         {% else %}
-        <p class="text-muted">No bets placed yet. Visit the <a href="{{ url_for('index') }}">games page</a> to place your first bet!</p>
+        <p class="text-muted">No bets placed yet.</p>
         {% endif %}
     </div>
 </div>
 
-<!-- Edit Bet Modal -->
+{% if is_own_profile %}
+<!-- Edit Bet Modal (only for own profile) -->
 <div id="editBetModal" class="modal" style="display: none;">
     <div class="modal-content">
         <span class="close" onclick="closeEditModal()">&times;</span>
@@ -353,6 +377,32 @@ window.onclick = function(event) {
 
 .btn-danger:hover {
     background-color: #c82333;
+}
+</style>
+{% endif %}
+
+<style>
+.pagination {
+    text-align: center;
+    margin-top: 20px;
+    padding: 20px;
+}
+
+.pagination a {
+    padding: 8px 16px;
+    background-color: #007bff;
+    color: white;
+    text-decoration: none;
+    border-radius: 4px;
+    margin: 0 10px;
+}
+
+.pagination a:hover {
+    background-color: #0056b3;
+}
+
+.pagination span {
+    margin: 0 20px;
 }
 </style>
 

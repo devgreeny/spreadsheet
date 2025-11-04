@@ -211,6 +211,44 @@ def leaderboard():
     return render_template('leaderboard.html', leaderboard=leaderboard_data)
 
 
+@app.route('/user/<username>')
+def user_profile(username):
+    """Public user profile - view anyone's bets and stats"""
+    # Find user by username
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        flash('User not found', 'error')
+        return redirect(url_for('leaderboard'))
+    
+    # Pagination for bets
+    page = request.args.get('page', 1, type=int)
+    per_page = 50
+    
+    # Get user's bets with pagination
+    bets_pagination = Bet.query.filter_by(user_id=user.id)\
+        .order_by(desc(Bet.created_at))\
+        .paginate(page=page, per_page=per_page, error_out=False)
+    
+    bets = bets_pagination.items
+    
+    # Calculate statistics
+    stats = calculate_user_stats(user.id)
+    
+    # Get analytics
+    analytics = calculate_analytics(user.id)
+    
+    # Check if viewing own profile
+    is_own_profile = current_user.is_authenticated and current_user.id == user.id
+    
+    return render_template('user_profile.html', 
+                         user=user,
+                         bets=bets, 
+                         stats=stats, 
+                         analytics=analytics,
+                         pagination=bets_pagination,
+                         is_own_profile=is_own_profile)
+
+
 # ==================== API ROUTES ====================
 
 @app.route('/api/place-bet', methods=['POST'])
@@ -236,9 +274,8 @@ def api_place_bet():
         if not game:
             return jsonify({'error': 'Game not found'}), 404
         
-        # Check if game has already started
-        if game.game_time <= datetime.utcnow():
-            return jsonify({'error': 'Game has already started'}), 400
+        # Allow betting on any game (past, present, or future)
+        # This enables retroactive bet logging
         
         # Create bet
         bet = Bet(
@@ -261,6 +298,85 @@ def api_place_bet():
         })
     
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/edit-bet/<bet_id>', methods=['PUT'])
+@login_required
+def api_edit_bet(bet_id):
+    """Edit an existing bet"""
+    try:
+        # Find the bet
+        bet = Bet.query.get(bet_id)
+        if not bet:
+            return jsonify({'error': 'Bet not found'}), 404
+        
+        # Check ownership
+        if bet.user_id != current_user.id:
+            return jsonify({'error': 'Not authorized to edit this bet'}), 403
+        
+        # Don't allow editing graded bets
+        if bet.result != 'PENDING':
+            return jsonify({'error': 'Cannot edit a graded bet. Delete and create a new one instead.'}), 400
+        
+        data = request.get_json()
+        
+        # Update fields if provided
+        if 'odds' in data:
+            bet.odds = int(data['odds'])
+        if 'line' in data:
+            bet.line = float(data['line']) if data['line'] else None
+        if 'stake' in data:
+            bet.stake = float(data['stake'])
+        if 'team' in data:
+            bet.team = data['team']
+        
+        db.session.commit()
+        
+        # Clear user stats cache
+        cache.delete_memoized(calculate_user_stats, current_user.id)
+        cache.delete_memoized(calculate_analytics, current_user.id)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Bet updated successfully'
+        })
+    
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/delete-bet/<bet_id>', methods=['DELETE'])
+@login_required
+def api_delete_bet(bet_id):
+    """Delete a bet"""
+    try:
+        # Find the bet
+        bet = Bet.query.get(bet_id)
+        if not bet:
+            return jsonify({'error': 'Bet not found'}), 404
+        
+        # Check ownership
+        if bet.user_id != current_user.id:
+            return jsonify({'error': 'Not authorized to delete this bet'}), 403
+        
+        # Delete the bet
+        db.session.delete(bet)
+        db.session.commit()
+        
+        # Clear caches
+        cache.delete_memoized(calculate_user_stats, current_user.id)
+        cache.delete_memoized(calculate_analytics, current_user.id)
+        cache.delete_memoized(get_leaderboard_data)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Bet deleted successfully'
+        })
+    
+    except Exception as e:
+        db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
 

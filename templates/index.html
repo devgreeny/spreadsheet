@@ -159,6 +159,10 @@
             <label for="oddsInput">Odds (optional - adjust if different)</label>
             <input type="number" id="oddsInput" class="form-input" placeholder="+100">
         </div>
+        <div class="form-group" id="lineInputGroup" style="display: none;">
+            <label for="lineInput">Line/Spread (optional - adjust if different)</label>
+            <input type="number" id="lineInput" class="form-input" step="0.5" placeholder="e.g., -3.5 or 145.5">
+        </div>
         <div id="potentialPayout"></div>
         <button onclick="confirmBet()" class="btn btn-primary btn-block">Place Bet</button>
     </div>
@@ -178,6 +182,18 @@ function placeBet(gameId, betType, team, line, odds) {
     
     currentBet = { gameId, betType, team, line, odds };
     
+    // Show/hide line input based on bet type
+    const lineInputGroup = document.getElementById('lineInputGroup');
+    const lineInput = document.getElementById('lineInput');
+    
+    if (betType === 'SPREAD' || betType === 'TOTAL_OVER' || betType === 'TOTAL_UNDER') {
+        lineInputGroup.style.display = 'block';
+        lineInput.value = line;
+    } else {
+        lineInputGroup.style.display = 'none';
+        lineInput.value = '';
+    }
+    
     let betDescription = '';
     if (betType === 'ML') {
         betDescription = `${team} Moneyline (${formatOdds(odds)})`;
@@ -195,6 +211,7 @@ function placeBet(gameId, betType, team, line, odds) {
     document.getElementById('betModal').style.display = 'block';
     document.getElementById('stakeInput').addEventListener('input', updatePotentialPayout);
     document.getElementById('oddsInput').addEventListener('input', updatePotentialPayout);
+    document.getElementById('lineInput').addEventListener('input', updateBetDescription);
 }
 
 function closeBetModal() {
@@ -218,6 +235,27 @@ function updatePotentialPayout() {
         `<p>Potential Profit: <strong>${payout.toFixed(2)} units</strong></p>`;
 }
 
+function updateBetDescription() {
+    const lineInput = document.getElementById('lineInput').value;
+    const line = parseFloat(lineInput) || currentBet.line;
+    const oddsInput = document.getElementById('oddsInput').value;
+    const odds = parseInt(oddsInput) || currentBet.odds;
+    
+    let betDescription = '';
+    if (currentBet.betType === 'ML') {
+        betDescription = `${currentBet.team} Moneyline (${formatOdds(odds)})`;
+    } else if (currentBet.betType === 'SPREAD') {
+        betDescription = `${currentBet.team} ${formatOdds(line)} (${formatOdds(odds)})`;
+    } else if (currentBet.betType === 'TOTAL_OVER') {
+        betDescription = `Over ${line} (${formatOdds(odds)})`;
+    } else if (currentBet.betType === 'TOTAL_UNDER') {
+        betDescription = `Under ${line} (${formatOdds(odds)})`;
+    }
+    
+    document.getElementById('betDetails').innerHTML = `<p><strong>${betDescription}</strong></p>`;
+    updatePotentialPayout();
+}
+
 function confirmBet() {
     const stake = parseFloat(document.getElementById('stakeInput').value);
     if (!stake || stake <= 0) {
@@ -228,6 +266,9 @@ function confirmBet() {
     const oddsInput = document.getElementById('oddsInput').value;
     const odds = parseInt(oddsInput) || currentBet.odds;
     
+    const lineInput = document.getElementById('lineInput').value;
+    const line = lineInput ? parseFloat(lineInput) : currentBet.line;
+    
     fetch('/api/place-bet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -235,7 +276,7 @@ function confirmBet() {
             gameId: currentBet.gameId,
             betType: currentBet.betType,
             team: currentBet.team,
-            line: currentBet.line,
+            line: line,
             odds: odds,
             stake: stake
         })

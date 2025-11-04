@@ -1,11 +1,12 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
+from flask_caching import Cache
 from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime, timedelta
 import bcrypt
 import uuid
 import os
-from sqlalchemy import desc, func
+from sqlalchemy import desc, func, case
 
 from config import Config
 from models import db, User, Game, Odds, Bet
@@ -17,6 +18,12 @@ app.config.from_object(Config)
 
 # Initialize database
 db.init_app(app)
+
+# Initialize cache
+cache = Cache(app, config={
+    'CACHE_TYPE': 'simple',
+    'CACHE_DEFAULT_TIMEOUT': 300  # 5 minutes default
+})
 
 # Initialize Flask-Login
 login_manager = LoginManager()
@@ -38,6 +45,9 @@ def scheduled_fetch_odds():
         odds_data = fetch_odds_from_api()
         if odds_data:
             parse_and_save_odds(odds_data, db)
+            # Clear cache after updating odds
+            cache.delete('homepage')
+            cache.delete_memoized(get_todays_or_next_games)
         print('🕐 Scheduled odds fetch complete!')
 
 def scheduled_update_scores():
@@ -45,6 +55,8 @@ def scheduled_update_scores():
     with app.app_context():
         print('🕐 Scheduled score update starting...')
         update_scores_and_grade_bets(db)
+        # Clear all caches after grading bets (affects leaderboard and user stats)
+        cache.clear()
         print('🕐 Scheduled score update complete!')
 
 # Add scheduled jobs - Odds fetch 4x daily
@@ -72,6 +84,7 @@ print('   - Score updates: Every 3 hours (7 AM - 1 AM EST)')
 # ==================== ROUTES ====================
 
 @app.route('/')
+@cache.cached(timeout=60, key_prefix='homepage')
 def index():
     """Home page with games and odds"""
     # Get games for today or next available day
@@ -167,16 +180,28 @@ def logout():
 @login_required
 def dashboard():
     """User dashboard with bets and statistics"""
-    # Get user's bets
-    bets = Bet.query.filter_by(user_id=current_user.id).order_by(desc(Bet.created_at)).all()
+    # Pagination for better performance
+    page = request.args.get('page', 1, type=int)
+    per_page = 50
     
-    # Calculate statistics
+    # Get user's bets with pagination
+    bets_pagination = Bet.query.filter_by(user_id=current_user.id)\
+        .order_by(desc(Bet.created_at))\
+        .paginate(page=page, per_page=per_page, error_out=False)
+    
+    bets = bets_pagination.items
+    
+    # Calculate statistics (cached)
     stats = calculate_user_stats(current_user.id)
     
-    # Get analytics
+    # Get analytics (cached)
     analytics = calculate_analytics(current_user.id)
     
-    return render_template('dashboard.html', bets=bets, stats=stats, analytics=analytics)
+    return render_template('dashboard.html', 
+                         bets=bets, 
+                         stats=stats, 
+                         analytics=analytics,
+                         pagination=bets_pagination)
 
 
 @app.route('/leaderboard')
@@ -241,34 +266,40 @@ def api_place_bet():
 
 # ==================== HELPER FUNCTIONS ====================
 
+@cache.memoize(timeout=300)
 def get_todays_or_next_games():
-    """Get games for today, or if none exist, get next available day's games"""
+    """Get games for today - OPTIMIZED to limit queries"""
     from pytz import timezone as pytz_timezone
+    from collections import defaultdict
     
     # Define EST timezone
     est = pytz_timezone('America/New_York')
     utc = pytz_timezone('UTC')
     
-    # Get current time in EST
-    now_utc = datetime.utcnow().replace(tzinfo=utc)
-    now_est = now_utc.astimezone(est)
+    # Get current time
+    now_utc = datetime.utcnow()
+    now_utc_aware = now_utc.replace(tzinfo=utc)
+    now_est = now_utc_aware.astimezone(est)
     
-    # Get ALL upcoming games first (in UTC)
-    all_upcoming_games = Game.query.filter(
-        Game.game_time >= datetime.utcnow()
-    ).order_by(Game.game_time).all()
+    # Only get games for next 7 days (not ALL upcoming games)
+    week_from_now = now_utc + timedelta(days=7)
     
-    if not all_upcoming_games:
+    # Limit query to recent games only
+    upcoming_games = Game.query.filter(
+        Game.game_time >= now_utc,
+        Game.game_time <= week_from_now
+    ).order_by(Game.game_time).limit(200).all()
+    
+    if not upcoming_games:
         print('📅 No upcoming games found in database')
         return []
     
-    print(f'📊 Total upcoming games in database: {len(all_upcoming_games)}')
+    print(f'📊 Found {len(upcoming_games)} games in next 7 days')
     
     # Group games by EST date
-    from collections import defaultdict
     games_by_date = defaultdict(list)
     
-    for game in all_upcoming_games:
+    for game in upcoming_games:
         # Convert UTC game time to EST
         game_time_utc = game.game_time.replace(tzinfo=utc)
         game_time_est = game_time_utc.astimezone(est)
@@ -280,38 +311,59 @@ def get_todays_or_next_games():
     # Get today's date in EST
     today_date_est = now_est.date()
     
-    # Debug: Print all dates with game counts (in EST)
+    # Debug: Print dates with game counts (in EST)
     print('📊 Games by date (EST):')
-    for date in sorted(games_by_date.keys()):
+    for date in sorted(games_by_date.keys())[:3]:  # Only show first 3 dates
         print(f'   {date}: {len(games_by_date[date])} games')
     
     # Check if we have games today (EST)
     if today_date_est in games_by_date:
-        print(f'📅 Found {len(games_by_date[today_date_est])} games for today (EST)')
+        print(f'📅 Showing {len(games_by_date[today_date_est])} games for today (EST)')
         return games_by_date[today_date_est]
     
     # Get the next available date (EST)
-    print('📅 No games today, finding next available day...')
+    print('📅 No games today, showing next available day...')
     next_date = min(games_by_date.keys())
     next_games = games_by_date[next_date]
     
-    print(f'📅 Found {len(next_games)} games for {next_date.strftime("%B %d, %Y")} (EST)')
+    print(f'📅 Showing {len(next_games)} games for {next_date.strftime("%B %d, %Y")} (EST)')
     return next_games
 
 
+@cache.memoize(timeout=60)
 def calculate_user_stats(user_id):
-    """Calculate user statistics"""
-    bets = Bet.query.filter_by(user_id=user_id).all()
+    """Calculate user statistics - OPTIMIZED with aggregation"""
+    # Use database aggregation instead of loading all bets
+    stats_query = db.session.query(
+        func.count(Bet.id).label('totalBets'),
+        func.coalesce(func.sum(Bet.stake), 0).label('totalStaked'),
+        func.coalesce(func.sum(Bet.profit), 0).label('totalProfit'),
+        func.sum(case((Bet.result == 'PENDING', 1), else_=0)).label('pendingBets'),
+        func.sum(case((Bet.result == 'WON', 1), else_=0)).label('wonBets'),
+        func.sum(case((Bet.result == 'LOST', 1), else_=0)).label('lostBets')
+    ).filter(Bet.user_id == user_id).first()
     
-    total_bets = len(bets)
-    pending_bets = len([b for b in bets if b.result == 'PENDING'])
-    won_bets = len([b for b in bets if b.result == 'WON'])
-    lost_bets = len([b for b in bets if b.result == 'LOST'])
+    if not stats_query or stats_query.totalBets == 0:
+        return {
+            'totalBets': 0,
+            'pendingBets': 0,
+            'wonBets': 0,
+            'lostBets': 0,
+            'totalStaked': 0,
+            'totalProfit': 0,
+            'winRate': 0,
+            'roi': 0
+        }
     
-    total_staked = sum(b.stake for b in bets)
-    total_profit = sum(b.profit for b in bets if b.profit is not None)
+    total_bets = stats_query.totalBets
+    pending_bets = stats_query.pendingBets
+    won_bets = stats_query.wonBets
+    lost_bets = stats_query.lostBets
+    total_staked = float(stats_query.totalStaked)
+    total_profit = float(stats_query.totalProfit)
     
-    win_rate = (won_bets / (won_bets + lost_bets) * 100) if (won_bets + lost_bets) > 0 else 0
+    settled_bets = won_bets + lost_bets
+    win_rate = (won_bets / settled_bets * 100) if settled_bets > 0 else 0
     roi = (total_profit / total_staked * 100) if total_staked > 0 else 0
     
     return {
@@ -326,92 +378,106 @@ def calculate_user_stats(user_id):
     }
 
 
+@cache.memoize(timeout=60)
 def calculate_analytics(user_id):
-    """Calculate detailed analytics"""
-    bets = Bet.query.filter_by(user_id=user_id).all()
+    """Calculate detailed analytics - OPTIMIZED"""
+    # Bet type stats using aggregation
+    bet_type_query = db.session.query(
+        Bet.bet_type,
+        func.count(Bet.id).label('totalBets'),
+        func.coalesce(func.sum(Bet.stake), 0).label('totalStaked'),
+        func.coalesce(func.sum(Bet.profit), 0).label('totalProfit'),
+        func.sum(case((Bet.result == 'WON', 1), else_=0)).label('wonBets'),
+        func.sum(case((Bet.result == 'LOST', 1), else_=0)).label('lostBets')
+    ).filter(Bet.user_id == user_id)\
+     .group_by(Bet.bet_type)\
+     .all()
     
-    # Bet type stats
-    bet_type_stats = {}
-    for bet in bets:
-        if bet.bet_type not in bet_type_stats:
-            bet_type_stats[bet.bet_type] = {
-                'totalBets': 0,
-                'wonBets': 0,
-                'lostBets': 0,
-                'totalStaked': 0,
-                'totalProfit': 0
-            }
+    bet_type_stats = []
+    for row in bet_type_query:
+        total_decided = row.wonBets + row.lostBets
+        win_rate = (row.wonBets / total_decided * 100) if total_decided > 0 else 0
+        roi = (row.totalProfit / row.totalStaked * 100) if row.totalStaked > 0 else 0
         
-        stats = bet_type_stats[bet.bet_type]
-        stats['totalBets'] += 1
-        stats['totalStaked'] += bet.stake
-        if bet.result == 'WON':
-            stats['wonBets'] += 1
-        elif bet.result == 'LOST':
-            stats['lostBets'] += 1
-        if bet.profit:
-            stats['totalProfit'] += bet.profit
+        bet_type_stats.append({
+            'betType': row.bet_type,
+            'totalBets': row.totalBets,
+            'wonBets': row.wonBets,
+            'lostBets': row.lostBets,
+            'totalStaked': float(row.totalStaked),
+            'totalProfit': float(row.totalProfit),
+            'winRate': win_rate,
+            'roi': roi
+        })
     
-    # Calculate rates
-    for bet_type, stats in bet_type_stats.items():
-        total_decided = stats['wonBets'] + stats['lostBets']
-        stats['winRate'] = (stats['wonBets'] / total_decided * 100) if total_decided > 0 else 0
-        stats['roi'] = (stats['totalProfit'] / stats['totalStaked'] * 100) if stats['totalStaked'] > 0 else 0
+    # Team stats using aggregation (only for decided bets)
+    team_query = db.session.query(
+        Bet.team,
+        func.count(Bet.id).label('bets'),
+        func.sum(case((Bet.result == 'WON', 1), else_=0)).label('wins'),
+        func.sum(case((Bet.result == 'LOST', 1), else_=0)).label('losses'),
+        func.coalesce(func.sum(Bet.profit), 0).label('profit')
+    ).filter(
+        Bet.user_id == user_id,
+        Bet.team.isnot(None),
+        Bet.result.in_(['WON', 'LOST'])
+    ).group_by(Bet.team)\
+     .order_by(desc(func.sum(Bet.profit)))\
+     .limit(10)\
+     .all()
     
-    # Team stats
-    team_stats = {}
-    for bet in bets:
-        if bet.team and bet.result in ['WON', 'LOST']:
-            if bet.team not in team_stats:
-                team_stats[bet.team] = {'bets': 0, 'wins': 0, 'losses': 0, 'profit': 0}
-            
-            team_stats[bet.team]['bets'] += 1
-            if bet.result == 'WON':
-                team_stats[bet.team]['wins'] += 1
-            else:
-                team_stats[bet.team]['losses'] += 1
-            if bet.profit:
-                team_stats[bet.team]['profit'] += bet.profit
-    
-    # Calculate win rates
-    for team, stats in team_stats.items():
-        total = stats['wins'] + stats['losses']
-        stats['winRate'] = (stats['wins'] / total * 100) if total > 0 else 0
-    
-    # Sort teams by profit
-    team_stats_list = [
-        {'team': team, **stats} 
-        for team, stats in team_stats.items()
-    ]
-    team_stats_list.sort(key=lambda x: x['profit'], reverse=True)
+    team_stats = []
+    for row in team_query:
+        total = row.wins + row.losses
+        win_rate = (row.wins / total * 100) if total > 0 else 0
+        
+        team_stats.append({
+            'team': row.team,
+            'bets': row.bets,
+            'wins': row.wins,
+            'losses': row.losses,
+            'profit': float(row.profit),
+            'winRate': win_rate
+        })
     
     return {
-        'betTypeStats': [
-            {'betType': bt, **stats}
-            for bt, stats in bet_type_stats.items()
-        ],
-        'teamStats': team_stats_list[:10]
+        'betTypeStats': bet_type_stats,
+        'teamStats': team_stats
     }
 
 
+@cache.memoize(timeout=120)
 def get_leaderboard_data():
-    """Get leaderboard rankings"""
-    users = User.query.all()
-    leaderboard = []
+    """Get leaderboard rankings - OPTIMIZED with single query"""
+    # Single aggregated query instead of N+1 queries
+    leaderboard_query = db.session.query(
+        User.username,
+        func.count(Bet.id).label('totalBets'),
+        func.coalesce(func.sum(Bet.stake), 0).label('totalStaked'),
+        func.coalesce(func.sum(Bet.profit), 0).label('totalProfit'),
+        func.sum(case((Bet.result == 'WON', 1), else_=0)).label('wonBets'),
+        func.sum(case((Bet.result == 'LOST', 1), else_=0)).label('lostBets')
+    ).outerjoin(Bet, User.id == Bet.user_id)\
+     .group_by(User.id, User.username)\
+     .having(func.count(Bet.id) > 0)\
+     .all()
     
-    for user in users:
-        stats = calculate_user_stats(user.id)
-        if stats['totalBets'] > 0:
-            leaderboard.append({
-                'username': user.username,
-                'totalProfit': stats['totalProfit'],
-                'totalStaked': stats['totalStaked'],
-                'totalBets': stats['totalBets'],
-                'wonBets': stats['wonBets'],
-                'lostBets': stats['lostBets'],
-                'winRate': stats['winRate'],
-                'roi': stats['roi']
-            })
+    leaderboard = []
+    for row in leaderboard_query:
+        settled_bets = row.wonBets + row.lostBets
+        win_rate = (row.wonBets / settled_bets * 100) if settled_bets > 0 else 0
+        roi = (row.totalProfit / row.totalStaked * 100) if row.totalStaked > 0 else 0
+        
+        leaderboard.append({
+            'username': row.username,
+            'totalProfit': float(row.totalProfit),
+            'totalStaked': float(row.totalStaked),
+            'totalBets': row.totalBets,
+            'wonBets': row.wonBets,
+            'lostBets': row.lostBets,
+            'winRate': win_rate,
+            'roi': roi
+        })
     
     # Sort by profit
     leaderboard.sort(key=lambda x: x['totalProfit'], reverse=True)
